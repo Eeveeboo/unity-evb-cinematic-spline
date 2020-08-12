@@ -14,7 +14,7 @@ public class EVBCineSpline : MonoBehaviour
     public float Position = 0f;
     [Tooltip("Meters/Second unless DoNotUseFixedSpeed==true then Speed becomes the Duration of the Dolly Move")]
     public float Speed = 1f;
-    public ZMode ZRotationMode = ZMode.Smooth;
+    public ZMode ZRotationMode = ZMode.Linear;
     public bool DoNotUseFixedSpeed = false;
     [Range(0.01f,1f)]
     public float StepResolution = 0.1f;
@@ -124,14 +124,19 @@ public class EVBCineSpline : MonoBehaviour
         }
         else if(ZRotationMode == ZMode.Smooth)
         {
-            float z0 = s.a.rotation.eulerAngles.z, z1 = s.b.rotation.eulerAngles.z, z2 = s.c.rotation.eulerAngles.z, z3 = s.d.rotation.eulerAngles.z;
-            float _m1 = (1.0f - ZAngularTension) * (z2 - z1 + t12 * ((z1 - z0) / t01 - (z2 - z0) / (t01 + t12)));
-            float _m2 = (1.0f - ZAngularTension) * (z2 - z1 + t12 * ((z3 - z2) / t23 - (z3 - z1) / (t12 + t23)));
-            float _a = 2f * (z1 - z2) + _m1 + _m2, _b = -3f * (z1 - z2) - _m1 - _m1 - _m2, _c = _m1, _d = z1;
-            float z = _a * t * t * t + _b * t * t + _c * t + _d;
+            // Quaternion.AngleAxis(s.a.rotation.eulerAngles.z, Vector3.up)*Vector3.forward
+            r0 = Quaternion.AngleAxis(s.a.rotation.eulerAngles.z, Vector3.up) * Vector3.forward;
+            r1 = Quaternion.AngleAxis(s.b.rotation.eulerAngles.z, Vector3.up) * Vector3.forward;
+            r2 = Quaternion.AngleAxis(s.c.rotation.eulerAngles.z, Vector3.up) * Vector3.forward;
+            r3 = Quaternion.AngleAxis(s.d.rotation.eulerAngles.z, Vector3.up) * Vector3.forward;
+
+            m1 = (1.0f - ZAngularTension) * (r2 - r1 + t12 * ((r1 - r0) / t01 - (r2 - r0) / (t01 + t12)));
+            m2 = (1.0f - ZAngularTension) * (r2 - r1 + t12 * ((r3 - r2) / t23 - (r3 - r1) / (t12 + t23)));
+            a = 2f * (r1 - r2) + m1 + m2; b = -3f * (r1 - r2) - m1 - m1 - m2; c = m1; d = r1;
+            Vector3 zForward = a * t * t * t + b * t * t + c * t + d;
 
             rotation = Quaternion.LookRotation(forward, Vector3.up);
-            rotation.eulerAngles += Vector3.forward * z;
+            rotation.eulerAngles += Vector3.forward * Quaternion.LookRotation(zForward, Vector3.up).eulerAngles.y;
         }
         else if(ZRotationMode == ZMode.Linear)
         {
