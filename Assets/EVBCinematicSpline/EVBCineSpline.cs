@@ -1,25 +1,28 @@
-﻿using System.Collections;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using UnityEngine;
 
 public class EVBCineSpline : MonoBehaviour
 {
     [Range(-3,1)]
-    public float Tension = 0f;
+    public float Tension = -1f;
     [Range(-3,1)]
-    public float AngularTension = 0f;
+    public float AngularTension = -1f;
+    [Range(-3, 1)]
+    public float ZAngularTension = 1;
     public bool Play = false;
     [Range(0,1)]
     public float Position = 0f;
-    [Tooltip("Meters/Second")]
+    [Tooltip("Meters/Second unless DoNotUseFixedSpeed==true then Speed becomes the Duration of the Dolly Move")]
     public float Speed = 1f;
+    public ZMode ZRotationMode = ZMode.Smooth;
     public bool DoNotUseFixedSpeed = false;
     [Range(0.01f,1f)]
-    public float StepResolution = 0.01f;
+    public float StepResolution = 0.1f;
     
     public List<Transform> Keyframes;
     public Transform Dolly;
     public Transform OverrideUp;
+    public Mesh GizmoMesh;
 
     // Update is called once per frame
     void Update()
@@ -92,16 +95,50 @@ public class EVBCineSpline : MonoBehaviour
         Vector3 point = a * t * t * t + b * t * t + c * t + d;
 
         Vector3 r0 = s.a.rotation* Vector3.forward, r1 = s.b.rotation* Vector3.forward, r2 = s.c.rotation* Vector3.forward, r3 = s.d.rotation* Vector3.forward;
-        t01 = 1;//(p0-p1).magnitude * Alpha;
-        t12 = 1;//(p1-p2).magnitude * Alpha;
-        t23 = 1;//(p2-p3).magnitude * Alpha;
 
         m1 = (1.0f - AngularTension) * (r2 - r1 + t12 * ((r1 - r0) / t01 - (r2 - r0) / (t01 + t12)));
         m2 = (1.0f - AngularTension) * (r2 - r1 + t12 * ((r3 - r2) / t23 - (r3 - r1) / (t12 + t23)));
         a = 2f * (r1 - r2) + m1 + m2; b = -3f * (r1 - r2) - m1 - m1 - m2; c = m1; d = r1;
         Vector3 forward = a * t * t * t + b * t * t + c * t + d;
 
-        Quaternion rotation = Quaternion.LookRotation(forward, OverrideUp?OverrideUp.up:Vector3.up);
+        Quaternion rotation = Quaternion.identity;
+
+        if (ZRotationMode == ZMode.World)
+        {
+            rotation = Quaternion.LookRotation(forward, Vector3.up);
+        }
+        else if (ZRotationMode == ZMode.Override)
+        {
+            rotation = Quaternion.LookRotation(forward, OverrideUp ? OverrideUp.up : Vector3.up);
+        }
+        else if(ZRotationMode == ZMode.Artistic)
+        {
+            r0 = s.a.rotation * Vector3.up; r1 = s.b.rotation * Vector3.up; r2 = s.c.rotation * Vector3.up; r3 = s.d.rotation * Vector3.up;
+
+            m1 = (1.0f - ZAngularTension) * (r2 - r1 + t12 * ((r1 - r0) / t01 - (r2 - r0) / (t01 + t12)));
+            m2 = (1.0f - ZAngularTension) * (r2 - r1 + t12 * ((r3 - r2) / t23 - (r3 - r1) / (t12 + t23)));
+            a = 2f * (r1 - r2) + m1 + m2; b = -3f * (r1 - r2) - m1 - m1 - m2; c = m1; d = r1;
+            Vector3 up = a * t * t * t + b * t * t + c * t + d;
+
+            rotation = Quaternion.LookRotation(forward, up);
+        }
+        else if(ZRotationMode == ZMode.Smooth)
+        {
+            float z0 = s.a.rotation.eulerAngles.z, z1 = s.b.rotation.eulerAngles.z, z2 = s.c.rotation.eulerAngles.z, z3 = s.d.rotation.eulerAngles.z;
+            float _m1 = (1.0f - ZAngularTension) * (z2 - z1 + t12 * ((z1 - z0) / t01 - (z2 - z0) / (t01 + t12)));
+            float _m2 = (1.0f - ZAngularTension) * (z2 - z1 + t12 * ((z3 - z2) / t23 - (z3 - z1) / (t12 + t23)));
+            float _a = 2f * (z1 - z2) + _m1 + _m2, _b = -3f * (z1 - z2) - _m1 - _m1 - _m2, _c = _m1, _d = z1;
+            float z = _a * t * t * t + _b * t * t + _c * t + _d;
+
+            rotation = Quaternion.LookRotation(forward, Vector3.up);
+            rotation.eulerAngles += Vector3.forward * z;
+        }
+        else if(ZRotationMode == ZMode.Linear)
+        {
+            float z0 = s.a.rotation.eulerAngles.z, z1 = s.b.rotation.eulerAngles.z, z2 = s.c.rotation.eulerAngles.z, z3 = s.d.rotation.eulerAngles.z;
+            rotation = Quaternion.LookRotation(forward, Vector3.up);
+            rotation.eulerAngles += Vector3.forward * Mathf.LerpAngle(z0, z1, t);//z;
+        }
 
         return new Tfrm {
             position = point,
@@ -147,20 +184,26 @@ public class EVBCineSpline : MonoBehaviour
         if(Keyframes.Count >= 2){
             // Step Distance
             float stepDistance = Mathf.Max(Speed,0.1f);
+            int every = Mathf.Max(Mathf.FloorToInt(((1 / StepResolution) * Keyframes.Count) / Speed),1);
 
             Vector3 startingPos = Keyframes[0].position;
             float startingTime = 0;
             float time = 0;
 
-            while(time <= 1){
+            Gizmos.color = Color.gray;
+            if (GizmoMesh) Gizmos.DrawWireMesh(GizmoMesh, Keyframes[0].position, Keyframes[0].rotation * Quaternion.Euler(0, -90, 0));
+
+            int cnt = 0;
+            while(time < 1){
                 var step = StepResolution / Keyframes.Count;
-                time += step;
+                time = Mathf.Min(step+time,1);
                 float utime = time * (Keyframes.Count-1);
                 var seg = GetSegmentForTime(utime);
                 var between = utime - Mathf.Floor(utime);
                 var tfrm = CatmulPro(seg, between);
                 if (DoNotUseFixedSpeed)
                 {
+                    cnt++;
                     Gizmos.color = Color.red;
                     Gizmos.DrawLine(startingPos, tfrm.position);
                     startingPos = tfrm.position;
@@ -171,7 +214,10 @@ public class EVBCineSpline : MonoBehaviour
                     Gizmos.color = Color.red;
                     Gizmos.DrawLine(startingPos, startingPos + tfrm.rotation * Vector3.right * 0.1f);
                     Gizmos.color = Color.green;
-                    Gizmos.DrawLine(startingPos, startingPos + tfrm.rotation * Vector3.up * 0.1f);
+                    Gizmos.DrawLine(startingPos, startingPos + tfrm.rotation * Vector3.up * 1f);
+
+                    Gizmos.color = Color.gray;
+                    if (GizmoMesh && cnt % every == 0) Gizmos.DrawWireMesh(GizmoMesh, startingPos, tfrm.rotation * Quaternion.Euler(0, -90, 0));
                     continue;
                 }
                 float dist = (startingPos - tfrm.position).magnitude;
@@ -179,7 +225,7 @@ public class EVBCineSpline : MonoBehaviour
                     continue;
                 }else if(dist > 0){
                     var deltaT = time-startingTime;
-                    time = startingTime + (stepDistance/dist)*deltaT;
+                    time = Mathf.Min(startingTime + (stepDistance/dist)*deltaT,1);
 
                     utime = time * (Keyframes.Count -1);
                     seg = GetSegmentForTime(utime);
@@ -187,7 +233,7 @@ public class EVBCineSpline : MonoBehaviour
                     tfrm = CatmulPro(seg, between);
                 }
 
-
+                cnt++;
                 Gizmos.color = Color.red;
                 Gizmos.DrawLine(startingPos, tfrm.position);
                 startingPos = tfrm.position;
@@ -198,7 +244,10 @@ public class EVBCineSpline : MonoBehaviour
                 Gizmos.color = Color.red;
                 Gizmos.DrawLine(startingPos, startingPos + tfrm.rotation * Vector3.right * 0.1f);
                 Gizmos.color = Color.green;
-                Gizmos.DrawLine(startingPos, startingPos + tfrm.rotation * Vector3.up * 0.1f);
+                Gizmos.DrawLine(startingPos, startingPos + tfrm.rotation * Vector3.up * 1f);
+
+                Gizmos.color = Color.gray;
+                if(GizmoMesh) Gizmos.DrawWireMesh(GizmoMesh, startingPos, tfrm.rotation*Quaternion.Euler(0,-90,0));
             }
         }
     }
@@ -212,6 +261,9 @@ public class EVBCineSpline : MonoBehaviour
         public Tfrm b;
         public Tfrm c;
         public Tfrm d; 
+    }
+    public enum ZMode {
+        Artistic, Smooth, Linear, Override, World
     }
 }
 

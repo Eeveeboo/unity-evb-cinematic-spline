@@ -3,7 +3,11 @@ guid: 6a683580074014edd8eed844f26554d6
 MonoImporter:
   externalObjects: {}
   serializedVersion: 2
-  defaultReferences: []
+  defaultReferences:
+  - Dolly: {instanceID: 0}
+  - OverrideUp: {instanceID: 0}
+  - GizmoMesh: {fileID: -2432090755550338912, guid: acd228a2f7f77424fba80944f71356fa,
+      type: 3}
   executionOrder: 0
   icon: {instanceID: 0}
   userData: 
